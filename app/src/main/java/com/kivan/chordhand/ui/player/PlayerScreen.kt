@@ -41,6 +41,8 @@ import com.kivan.chordhand.ui.theme.Palette
 /** How long before a change the next chord's keys get their dots. */
 private const val NEXT_HINT_MS = 1500L
 
+private const val SYNC_STEP_MS = 200L
+
 @Composable
 fun PlayerScreen(vm: PlayerController, connection: ConnectionState, onScan: () -> Unit, onBack: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -49,7 +51,12 @@ fun PlayerScreen(vm: PlayerController, connection: ConnectionState, onScan: () -
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Toolbar(vm, view, state, connection, onScan, onBack)
         Row(Modifier.weight(1f).fillMaxWidth().padding(vertical = 6.dp)) {
-            ChordPanel(vm, view, state, Modifier.width(250.dp).fillMaxHeight())
+            ChordPanel(
+                view, state,
+                onNudge = vm::nudgeOffset,
+                onNextLineNow = vm::syncNextLineNow,
+                modifier = Modifier.width(290.dp).fillMaxHeight(),
+            )
             Spacer(Modifier.width(16.dp))
             LyricsPanel(view, state, Modifier.weight(1f))
         }
@@ -68,6 +75,7 @@ fun PlayerScreen(vm: PlayerController, connection: ConnectionState, onScan: () -
             correct = state.match?.correct.orEmpty(),
             wrong = state.match?.wrong.orEmpty(),
             onTouch = vm::touchNote,
+            height = 110.dp,
         )
     }
 
@@ -96,7 +104,17 @@ private fun Toolbar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        TextButton(onClick = onBack) { Text("←") }
+        TextButton(onClick = onBack) { Text("←", fontSize = 20.sp) }
+        FilledTonalButton(onClick = vm::togglePlay) {
+            Text(if (state.playing) "Pause" else if (state.waitingFor != null) "Skip" else "Play", fontSize = 16.sp)
+        }
+        TextButton(onClick = { vm.seekBy(-5000) }) { Text("−5s") }
+        TextButton(onClick = vm::restart) { Text("⏮", fontSize = 18.sp) }
+        Text(
+            "%d:%02d".format(state.songMs.coerceAtLeast(0) / 60_000, state.songMs.coerceAtLeast(0) / 1000 % 60),
+            color = if (state.buffering) Palette.LeftHand else Palette.TextDim,
+        )
+        Spacer(Modifier.width(8.dp))
         Column {
             Text(view.title, fontWeight = FontWeight.SemiBold, maxLines = 1)
             Text(listOfNotNull(view.artist, view.key?.let { "key $it" }).joinToString(" · "), color = Palette.TextDim,
@@ -110,12 +128,6 @@ private fun Toolbar(
         }
         Labeled("Wait for me") { Switch(state.waitMode, vm::setWaitMode) }
         Labeled("Easy chords") { Switch(state.easy, vm::setEasy) }
-        Labeled("Sync") {
-            TextButton(onClick = { vm.nudgeOffset(-100) }) { Text("−") }
-            Text("%+.1fs".format(state.offsetMs / 1000.0))
-            TextButton(onClick = { vm.nudgeOffset(100) }) { Text("+") }
-            FilledTonalButton(onClick = vm::syncNextLineNow) { Text("Next line starts now") }
-        }
         if (view.lrcCount > 1) TextButton(onClick = vm::nextLyricSync) { Text("Lyrics ${state.lrcIndex + 1}/${view.lrcCount}") }
         TextButton(onClick = vm::finish) { Text("Finish") }
         ConnectionChip(connection, onScan)
@@ -135,7 +147,13 @@ private fun Labeled(label: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun ChordPanel(vm: PlayerController, view: SongView, state: PlayerUiState, modifier: Modifier) {
+private fun ChordPanel(
+    view: SongView,
+    state: PlayerUiState,
+    onNudge: (Long) -> Unit,
+    onNextLineNow: () -> Unit,
+    modifier: Modifier,
+) {
     val chords = view.timeline.chords
     val index = state.chordIndex
     val shown = if (index >= 0) index else 0
@@ -149,22 +167,32 @@ private fun ChordPanel(vm: PlayerController, view: SongView, state: PlayerUiStat
             MatchResult.HIT -> Palette.Correct
             else -> Palette.Chord
         }
-        Text(if (index >= 0) "NOW" else "FIRST CHORD", color = Palette.TextDim, style = MaterialTheme.typography.labelMedium)
-        Text(view.chords[shown].symbol, fontSize = 52.sp, fontWeight = FontWeight.Black, color = nowColor, lineHeight = 54.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text(if (index >= 0) "NOW" else "FIRST CHORD", color = Palette.TextDim, style = MaterialTheme.typography.labelMedium)
+                Text(view.chords[shown].symbol, fontSize = 46.sp, fontWeight = FontWeight.Black, color = nowColor, lineHeight = 48.sp)
+            }
+            Spacer(Modifier.width(16.dp))
+            view.voicings.getOrNull(shown)?.let { v ->
+                Column {
+                    Text("LH  " + v.leftHand.joinToString(" ") { Chord.midiName(it) }, color = Palette.LeftHand, fontWeight = FontWeight.SemiBold)
+                    Text("RH  " + v.rightHand.joinToString(" ") { Chord.midiName(it) }, color = Palette.RightHand, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
         if (state.waitingFor != null) {
             Text("Play it to continue", color = Palette.LeftHand, fontWeight = FontWeight.SemiBold)
         }
-        view.voicings.getOrNull(shown)?.let { v ->
-            Text("LH  " + v.leftHand.joinToString(" ") { Chord.midiName(it) }, color = Palette.LeftHand, fontWeight = FontWeight.SemiBold)
-            Text("RH  " + v.rightHand.joinToString(" ") { Chord.midiName(it) }, color = Palette.RightHand, fontWeight = FontWeight.SemiBold)
-        }
-        Spacer(Modifier.height(4.dp))
         if (nextIndex in chords.indices) {
             val startsIn = (chords[nextIndex].startMs - state.songMs).coerceAtLeast(0)
             Row(verticalAlignment = Alignment.Bottom) {
-                Text("NEXT ", color = Palette.TextDim, style = MaterialTheme.typography.labelMedium)
-                Text(view.chords[nextIndex].symbol, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Palette.Chord.copy(alpha = 0.7f))
-                Text("  in %.1fs".format(startsIn / 1000.0), color = Palette.TextDim)
+                if (index >= 0) {
+                    Text("NEXT ", color = Palette.TextDim, style = MaterialTheme.typography.labelMedium)
+                    Text(view.chords[nextIndex].symbol, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Palette.Chord.copy(alpha = 0.7f))
+                    Text("  in %.1fs".format(startsIn / 1000.0), color = Palette.TextDim)
+                } else {
+                    Text("Starts in %.1fs".format(startsIn / 1000.0), color = Palette.TextDim)
+                }
             }
             val from = if (index >= 0) chords[index].startMs else 0L
             val span = (chords[nextIndex].startMs - from).coerceAtLeast(1)
@@ -176,17 +204,23 @@ private fun ChordPanel(vm: PlayerController, view: SongView, state: PlayerUiStat
             )
         }
         Spacer(Modifier.weight(1f))
+        SyncControls(state.offsetMs, onNudge = onNudge, onNextLineNow = onNextLineNow)
+    }
+}
+
+/**
+ * Lyrics too late? "−" moves them earlier. Or tap "Next line now" the moment the singer starts
+ * the line below the current one.
+ */
+@Composable
+private fun SyncControls(offsetMs: Long, onNudge: (Long) -> Unit, onNextLineNow: () -> Unit) {
+    Column {
+        Text("LYRICS SYNC", color = Palette.TextDim, style = MaterialTheme.typography.labelMedium)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = vm::restart) { Text("⏮", fontSize = 22.sp) }
-            TextButton(onClick = { vm.seekBy(-5000) }) { Text("−5s") }
-            FilledTonalButton(onClick = vm::togglePlay) {
-                Text(if (state.playing) "Pause" else if (state.waitingFor != null) "Skip" else "Play", fontSize = 18.sp)
-            }
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "%d:%02d".format(state.songMs.coerceAtLeast(0) / 60_000, state.songMs.coerceAtLeast(0) / 1000 % 60),
-                color = if (state.buffering) Palette.LeftHand else Palette.TextDim,
-            )
+            TextButton(onClick = { onNudge(-SYNC_STEP_MS) }) { Text("−", fontSize = 20.sp) }
+            Text("%+.1fs".format(offsetMs / 1000.0))
+            TextButton(onClick = { onNudge(SYNC_STEP_MS) }) { Text("+", fontSize = 20.sp) }
+            FilledTonalButton(onClick = onNextLineNow) { Text("Next line now") }
         }
     }
 }

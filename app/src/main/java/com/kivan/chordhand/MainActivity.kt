@@ -9,10 +9,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.displayCutoutPadding
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +21,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kivan.chordhand.ui.player.PlayerController
 import com.kivan.chordhand.ui.player.PlayerScreen
@@ -44,12 +47,18 @@ class MainActivity : ComponentActivity() {
         AppGraph.init(this)
         // The phone sits on the music stand for the whole song.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Every pixel of height goes to the sheet and the keys; swipe from an edge to see the bars.
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
 
         setContent {
             Fp10Theme {
                 val connection by AppGraph.midi.connectionState.collectAsStateWithLifecycle()
                 var playing by rememberSaveable { mutableStateOf(false) }
-                Box(Modifier.fillMaxSize().background(Palette.Background).safeDrawingPadding()) {
+                Surface(Modifier.fillMaxSize(), color = Palette.Background, contentColor = Palette.Text) {
+                  Box(Modifier.fillMaxSize().displayCutoutPadding()) {
                     if (playing && AppGraph.currentSong != null) {
                         val controller = remember { PlayerController(application) }
                         DisposableEffect(controller) { onDispose { controller.release() } }
@@ -62,6 +71,7 @@ class MainActivity : ComponentActivity() {
                     } else {
                         SearchScreen(searchVm, connection, ::scan) { playing = true }
                     }
+                  }
                 }
             }
         }

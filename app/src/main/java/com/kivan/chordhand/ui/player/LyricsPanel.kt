@@ -31,13 +31,9 @@ fun LyricsPanel(view: SongView, state: PlayerUiState, modifier: Modifier = Modif
     if (lines.isEmpty()) return
     val current = view.timeline.lineAt(state.songMs)
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        for (li in (current - 1)..(current + 3)) {
+        for (li in current..(current + 2)) {
             if (li !in lines.indices) continue
-            val emphasis = when {
-                li < current -> 0.35f
-                li == current -> 1f
-                else -> 0.7f
-            }
+            val emphasis = if (li == current) 1f else 0.7f
             Text(chordRow(view, state, li, emphasis), style = Mono, maxLines = 1, overflow = TextOverflow.Clip, softWrap = false)
             Text(lyricRow(view, state, li, emphasis), style = Mono, maxLines = 1, overflow = TextOverflow.Clip, softWrap = false)
         }

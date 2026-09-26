@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -44,6 +45,11 @@ fun SearchScreen(
     onOpenPlayer: () -> Unit,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val keyboard = LocalSoftwareKeyboardController.current
+    val search = {
+        keyboard?.hide()
+        vm.search()
+    }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -53,11 +59,11 @@ fun SearchScreen(
                 placeholder = { Text("Song, artist — e.g. fluorescent adolescent") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { vm.search() }),
+                keyboardActions = KeyboardActions(onSearch = { search() }),
                 modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(12.dp))
-            Button(onClick = vm::search, enabled = !state.searching) { Text("Search") }
+            Button(onClick = search, enabled = !state.searching) { Text("Search") }
             Spacer(Modifier.width(12.dp))
             ConnectionChip(connection, onScan)
         }
