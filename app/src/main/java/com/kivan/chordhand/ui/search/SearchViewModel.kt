@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kivan.chordhand.AppGraph
 import com.kivan.chordhand.data.CachedSong
+import com.kivan.chordhand.data.DownloadState
 import com.kivan.chordhand.data.LoadStep
 import com.kivan.chordhand.data.LoadedSong
 import com.kivan.chordhand.data.source.UgSearchResult
@@ -26,6 +27,8 @@ data class SearchUiState(
     val recent: List<CachedSong> = emptyList(),
     /** Ids of the saved songs whose recording is downloaded, so they open with no network. */
     val offline: Set<String> = emptySet(),
+    /** Recordings downloading or failed, by song id. */
+    val downloads: Map<String, DownloadState> = emptyMap(),
     val loading: LoadingState? = null,
     val error: String? = null,
 )
@@ -40,6 +43,14 @@ class SearchViewModel : ViewModel() {
 
     init {
         refreshRecent()
+        viewModelScope.launch {
+            loader.downloads.collect { downloads ->
+                val finished = _state.value.downloads.keys - downloads.keys
+                _state.update { it.copy(downloads = downloads) }
+                // A finished download makes its song Offline.
+                if (finished.isNotEmpty()) refreshRecent()
+            }
+        }
     }
 
     fun refreshRecent() {

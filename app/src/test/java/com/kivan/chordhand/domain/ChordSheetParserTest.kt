@@ -61,4 +61,15 @@ class ChordSheetParserTest {
         assertThat(symbols).containsAtLeast("F#m7", "A", "Esus4", "B7sus4", "Dadd9")
         assertThat(sheet.lines.none { it.lyric?.contains("0-2-2") == true }).isTrue()
     }
+
+    @Test fun bareSectionNamesPipelessTabAndCreditsAreNotLyrics() {
+        val sheet = ChordSheetParser.parse(
+            "Tabbed by Tom Dixon    Capo 2.\n" +
+                "  [ch]D[/ch] [ch]Bm[/ch]\ne-2-2--0--0-2---3-|\nG-222---------444---| x2\n\n" +
+                "Verse 1.\n[ch]D[/ch]\nYou used to\nChorus:\n[ch]Em[/ch]\nOh that boy"
+        )
+        assertThat(sheet.lines.map { it.lyric }).containsExactly("You used to", "Oh that boy").inOrder()
+        assertThat(sheet.lines.map { it.section }).containsExactly("Verse 1", "Chorus").inOrder()
+        assertThat(sheet.lines.flatMap { it.chords }.map { it.chord.symbol }).containsExactly("D", "Em").inOrder()
+    }
 }

@@ -1,5 +1,6 @@
 package com.kivan.chordhand.data.source
 
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -19,7 +20,13 @@ data class UgSearchResult(
     val rating: Double,
     val votes: Int,
     val url: String,
+    /** Every chord sheet of this song, most voted first; [url] is the first. */
+    val versions: List<UgVersion> = emptyList(),
 )
+
+/** One of the chord sheets UG has for a song. */
+@Serializable
+data class UgVersion(val url: String, val rating: Double, val votes: Int)
 
 data class UgTab(
     val artist: String,
@@ -75,7 +82,7 @@ class UltimateGuitarSource(private val http: OkHttpClient = Http.client) {
 
         private fun JsonElement?.str(): String? = (this?.jsonPrimitive)?.takeIf { it.isString }?.content
 
-        /** Chord sheets only, best voted first, one per song (the most voted version). */
+        /** Chord sheets only, best voted first, one per song: the most voted version, listing all of them. */
         fun parseSearch(html: String): List<UgSearchResult> {
             val results = store(html).path("store", "page", "data", "results")?.jsonArray
                 ?: throw SourceException("Ultimate Guitar search returned no results block")
@@ -91,7 +98,9 @@ class UltimateGuitarSource(private val http: OkHttpClient = Http.client) {
                     )
                 }
                 .sortedByDescending { it.votes }
-                .distinctBy { it.artist.lowercase() to it.song.lowercase() }
+                .groupBy { it.artist.lowercase() to it.song.lowercase() }
+                .values
+                .map { versions -> versions.first().copy(versions = versions.map { UgVersion(it.url, it.rating, it.votes) }) }
         }
 
         fun parseTab(html: String, url: String): UgTab {

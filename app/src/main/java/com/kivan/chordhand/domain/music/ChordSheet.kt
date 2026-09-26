@@ -19,13 +19,20 @@ data class ChordSheet(val lines: List<SheetLine>) {
 
 /**
  * Reads Ultimate Guitar's tab markup: `[ch]Am[/ch]` marks a chord, `[tab]…[/tab]` wraps a chord
- * line with the lyric line under it, `[Verse 1]` on its own line starts a section. Guitar
- * tablature (`e|---0---|`) is skipped.
+ * line with the lyric line under it, `[Verse 1]` (or a bare `Chorus:` / `Verse 2.`) on its own line
+ * starts a section. Guitar tablature (`e|---0---|`, `e-2-2--0-|`), the chord names written over it
+ * and credit lines ("Tabbed by …") are skipped: none of them is sung.
  */
 object ChordSheetParser {
     private val SECTION = Regex("""^\s*\[([^\[\]]+)]\s*$""")
     private val CHORD_TAG = Regex("""\[ch](.*?)\[/ch]""")
-    private val TAB_STRING = Regex("""^\s*[eBGDAEbgda]?\s*\|[-0-9|hpbr/\\~x ]*$""")
+    private val TAB_STRING = Regex("""^\s*[eBGDAEbgda]?\s*[|-][-0-9|hpbr/\\~x ]*(\s*x\s*\d+)?\s*$""")
+    /** A section name written as plain text, as many sheets do: "Chorus.", "Verse 2:", "Intro". */
+    private val BARE_SECTION = Regex(
+        """^\s*((?:pre-?\s?)?(?:intro|verse|chorus|bridge|outro|solo|interlude|instrumental|hook|refrain|break|coda|ending|riff)(?:\s*\d+)?)\s*[.:]?\s*(?:x\s*\d+)?\s*$""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val CREDIT = Regex("""^\s*((tabbed|transcribed|arranged|submitted|chords|tab|written)\s+by|capo\b|tuning\s*:|key\s*:)""", RegexOption.IGNORE_CASE)
     /** A fingering chart line: "Em7     0-2-2-0-3-3" or "G  320033". */
     private val CHORD_DIAGRAM = Regex("""^\s*\S+\s+([x0-9]{1,2}[- ]?){6}\s*$""", RegexOption.IGNORE_CASE)
     /** What may stand between chords on a chord-only line: bars, repeat marks, N.C. */
@@ -47,13 +54,18 @@ object ChordSheetParser {
                 flushPending()
                 continue
             }
-            val header = if ("[ch]" in line) null else SECTION.matchEntire(line)
+            val header = if ("[ch]" in line) null else SECTION.matchEntire(line) ?: BARE_SECTION.matchEntire(line)
             if (header != null) {
                 flushPending()
                 section = header.groupValues[1].trim()
                 continue
             }
-            if ((TAB_STRING.matches(line) && line.count { it == '-' } > 4) || CHORD_DIAGRAM.matches(line)) {
+            if (TAB_STRING.matches(line) && line.count { it == '-' } > 4) {
+                // Chords written right over tablature name the tab's shapes; they are not played in time.
+                pending = null
+                continue
+            }
+            if (CHORD_DIAGRAM.matches(line) || ("[ch]" !in line && CREDIT.containsMatchIn(line))) {
                 flushPending()
                 continue
             }

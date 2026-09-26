@@ -4,6 +4,7 @@ import android.content.Context
 import com.kivan.chordhand.data.LoadedSong
 import com.kivan.chordhand.data.SongLoader
 import com.kivan.chordhand.data.SongStore
+import com.kivan.chordhand.data.listen.LyricListener
 import com.kivan.chordhand.data.midi.BleMidiManagerDataSource
 import com.kivan.chordhand.data.midi.MidiRepositoryImpl
 import com.kivan.chordhand.domain.repository.MidiRepository
@@ -19,7 +20,9 @@ object AppGraph {
 
     val midi: MidiRepository by lazy { MidiRepositoryImpl(BleMidiManagerDataSource(appContext)) }
 
-    val songLoader: SongLoader by lazy { SongLoader(SongStore(File(appContext.filesDir, "songs"))) }
+    val songLoader: SongLoader by lazy {
+        SongLoader(SongStore(File(appContext.filesDir, "songs")), listener = LyricListener(File(appContext.filesDir, "models")))
+    }
 
     /** The song handed from the search screen to the player. */
     @Volatile var currentSong: LoadedSong? = null

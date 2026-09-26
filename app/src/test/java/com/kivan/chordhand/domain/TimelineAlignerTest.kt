@@ -78,4 +78,19 @@ class TimelineAlignerTest {
     @Test fun noFirstCueWithoutChordsOrWords() {
         assertThat(TimelineAligner.align(ChordSheetParser.parse(""), emptyList(), 30_000).firstCueMs).isNull()
     }
+
+    @Test fun sectionNameWaitsForTheNextSungLine() {
+        val sheet = ChordSheetParser.parse("Verse.\n[ch]A[/ch]\nRemember when\nChorus.\n[ch]E[/ch]\nOh the boy")
+        val lrc = listOf(LrcLine(10_000, "Remember when"), LrcLine(14_000, "Oh the boy"))
+        val t = TimelineAligner.align(sheet, lrc, 30_000)
+        assertThat(t.sheet.lines.map { it.lyric }).containsExactly("Remember when", "Oh the boy").inOrder()
+        assertThat(t.lineAt(12_000)).isEqualTo(0)
+        assertThat(t.lineAt(14_000)).isEqualTo(1)
+    }
+
+    @Test fun unsungTitleAboveTheSheetIsDropped() {
+        val sheet = ChordSheetParser.parse("Arctic Monkeys - Fluorescent Adolescent\n\n[ch]A[/ch]\nRemember when")
+        val t = TimelineAligner.align(sheet, listOf(LrcLine(10_000, "Remember when")), 30_000)
+        assertThat(t.sheet.lines.map { it.lyric }).containsExactly("Remember when")
+    }
 }

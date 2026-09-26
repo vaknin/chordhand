@@ -1,5 +1,6 @@
 package com.kivan.chordhand.spike
 
+import com.kivan.chordhand.data.SongLoader
 import com.kivan.chordhand.data.source.Http
 import com.kivan.chordhand.data.source.LrclibSource
 import com.kivan.chordhand.data.source.UltimateGuitarSource
@@ -31,9 +32,17 @@ class PipelineSpikeTest {
         val tab = ug.fetchTab(hit.url)
         println("UG: capo ${tab.capo}, tuning offset ${tab.tuningOffset}, key ${tab.tonality}")
 
+        println("UG: ${hit.versions.size} chord sheet versions")
+
+        val lyrics = LrclibSource().search(tab.artist, tab.song)
+        val expected = SongLoader.expectedDurationSec(lyrics)
+        println("LRC: ${lyrics.size} entries, median synced length ${expected}s")
+
         val yt = YoutubeAudioSource()
-        val track = yt.search(tab.artist, tab.song).first()
-        println("YT: ${track.title} / ${track.uploader} ${track.durationSec}s ${track.videoUrl}")
+        val tracks = yt.search(tab.artist, tab.song)
+        tracks.take(5).forEach { println("YT candidate: ${it.title} / ${it.uploader} ${it.durationSec}s") }
+        val track = SongLoader.pickTrack(tracks, tab.song, expected)!!
+        println("YT: picked ${track.title} / ${track.uploader} ${track.durationSec}s ${track.videoUrl}")
         val audio = yt.resolveAudio(track.videoUrl)
         println("YT: ${audio.mimeType} ${audio.bitrate} bps")
         val probe = Request.Builder().url(audio.url).header("Range", "bytes=0-1023")
@@ -45,7 +54,7 @@ class PipelineSpikeTest {
         println("YT: downloaded ${file.length()} bytes in ${(System.nanoTime() - started) / 1_000_000} ms")
         file.delete()
 
-        val candidates = LrclibSource.rank(LrclibSource().search(tab.artist, tab.song), track.durationSec.toDouble())
+        val candidates = LrclibSource.rank(lyrics, track.durationSec.toDouble())
         candidates.forEach {
             println("LRC: #${it.id} ${it.albumName} ${it.duration}s plausibility " +
                 "%.2f".format(LrcParser.plausibility(LrcParser.parse(it.syncedLyrics!!))))

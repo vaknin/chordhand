@@ -50,8 +50,9 @@ class YoutubeAudioSource(private val http: OkHttpClient = Http.client) {
     /**
      * Saves the stream at [url] to [target], atomically: the file appears only once complete.
      * Fetched in ranges, as NewPipe does, because YouTube throttles one long request.
+     * [onProgress] gets the bytes saved and the total after each range.
      */
-    fun download(url: String, target: File) {
+    fun download(url: String, target: File, onProgress: (done: Long, total: Long) -> Unit = { _, _ -> }) {
         val part = File(target.path + ".part")
         try {
             part.outputStream().use { out ->
@@ -73,6 +74,7 @@ class YoutubeAudioSource(private val http: OkHttpClient = Http.client) {
                                 val read = response.body.byteStream().copyTo(out)
                                 if (read == 0L) throw SourceException("Download of $url stopped at $from of $total bytes")
                                 from += read
+                                onProgress(from, total)
                             }
                             else -> throw SourceException("Download of $url failed: HTTP ${response.code}")
                         }

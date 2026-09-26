@@ -35,6 +35,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kivan.chordhand.data.CachedSong
+import com.kivan.chordhand.data.DownloadState
 import com.kivan.chordhand.data.LoadStep
 import com.kivan.chordhand.domain.model.ConnectionState
 import com.kivan.chordhand.ui.common.ConnectionChip
@@ -80,12 +82,14 @@ fun SearchScreen(
             when {
                 state.searching -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 state.results.isNotEmpty() -> LazyColumn {
-                    val saved = state.recent.associateBy { it.ugUrl }
+                    // Any version of the sheet counts, as SongLoader.cachedFor does, then the title.
+                    val byUrl = state.recent.flatMap { s -> (s.ugVersions.map { it.url } + s.ugUrl).map { it to s } }.toMap()
+                    val byId = state.recent.associateBy { it.id }
                     items(state.results) { r ->
-                        val song = saved[r.url]
+                        val song = byUrl[r.url] ?: byId[CachedSong.idFor(r.artist, r.song)]
                         SongRow(
                             r.song, r.artist, "${r.votes} votes · ★ %.1f".format(r.rating),
-                            saved = song?.let { it.id in state.offline },
+                            status = song?.let { savedStatus(it, state) },
                             onRefresh = song?.let { { vm.refresh(it, onOpenPlayer) } },
                         ) { vm.open(r, onOpenPlayer) }
                     }
@@ -98,7 +102,7 @@ fun SearchScreen(
                     items(state.recent) { s ->
                         SongRow(
                             s.song, s.artist, s.tonality?.let { "Key $it" } ?: "",
-                            saved = s.id in state.offline,
+                            status = savedStatus(s, state),
                             onRefresh = { vm.refresh(s, onOpenPlayer) },
                         ) { vm.open(s, onOpenPlayer) }
                     }
@@ -116,16 +120,23 @@ fun SearchScreen(
     state.loading?.let { LoadingDialog(it, vm::cancelLoading) }
 }
 
+/** How far a saved song is from opening with no network. */
+private fun savedStatus(song: CachedSong, state: SearchUiState): String = when (val d = state.downloads[song.id]) {
+    is DownloadState.Running -> "Downloading ${(d.fraction * 100).toInt()}%"
+    DownloadState.Failed -> "Download failed · ↻"
+    null -> if (song.id in state.offline) "Offline" else "Saved"
+}
+
 /**
- * One song. [saved] is null for a song never opened, false when it is saved but the recording
- * still streams, true when it opens with no network. [onRefresh] fetches a saved song anew.
+ * One song. [status] is null for a song never opened, otherwise how it is saved (see
+ * [savedStatus]). [onRefresh] fetches a saved song anew.
  */
 @Composable
 private fun SongRow(
     title: String,
     artist: String,
     detail: String,
-    saved: Boolean? = null,
+    status: String? = null,
     onRefresh: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
@@ -138,9 +149,10 @@ private fun SongRow(
         Text(artist, color = Palette.TextDim)
         Spacer(Modifier.weight(1f))
         Text(detail, color = Palette.TextFaint, style = MaterialTheme.typography.bodySmall)
-        saved?.let {
+        status?.let {
             Spacer(Modifier.width(12.dp))
-            Text(if (it) "Offline" else "Saved", color = Palette.Correct.copy(alpha = 0.8f), style = MaterialTheme.typography.labelMedium)
+            val color = if (it.startsWith("Download failed")) Palette.Wrong else Palette.Correct.copy(alpha = 0.8f)
+            Text(it, color = color, style = MaterialTheme.typography.labelMedium)
         }
         if (onRefresh != null) {
             IconButton(onClick = onRefresh) {

@@ -16,10 +16,27 @@ An MVP. The question it answers: is this fun, and does it teach?
   on the next chord's keys shortly before the change, and your keys in green or red.
 - **Wait for me**: the song pauses at each change until you play the chord.
 - **Easy chords**: triads only (Em7 → Em, Dsus4 → D). Speed 50–100 %, pitch kept.
-- **Sync**: ±0.2 s when the lyrics run early or late. It is saved per song.
+- **Key**: move the song up to 5 semitones down or 6 up; the chords, keys and scoring follow and
+  the recording is pitch-shifted to match (tempo kept). **Easiest** picks the key with the fewest
+  black keys, with a small cost per semitone because the shifted audio sounds worse further out.
+  Saved per song.
+- **Words timed by ear**: once a recording is downloaded, the phone listens to it with
+  whisper.cpp (base.en, a 60 MB model fetched the first time) and times each sung word from
+  what it hears; LRCLIB only times whole lines, and some of those a second or two off. It runs
+  in the background, about 1.5 min per song on a Pixel 8, once per recording; the player shows
+  its progress under Lyrics sync, and the words switch over when it's done.
+- **Sync**: ±0.2 s when the lyrics run early or late. It is saved per song, and reset when the
+  words get timed by ear.
+- **Sheet versions**: UG usually has several chord sheets per song. The most voted one is used
+  unless under 60 % of its chords line up with sung words; then the next two are tried and the
+  best aligned wins. "Sheet 2/5" in the player switches by hand, keeping sync and key.
+- **Recording choice**: the synced lyrics are fetched first, and their median length picks the
+  YouTube result closest to the album recording; titles saying live, cover, remix, sped up and
+  the like lose unless the song's own name says it.
 - **Skip intro**: next to the countdown to the first chord; lands 1.5 s before it.
 - **Offline after the first open**: the chords, lyrics and recording (~3 MB) are saved, so a song
-  opens again with no network. The refresh button on a saved song fetches it all again.
+  opens again with no network. Its row shows the download's progress, then Offline. The refresh
+  button on a saved song fetches it all again.
 - A summary at the end: the share of chords played, the timing, and the three chord changes
   missed most.
 - Touch the on-screen keys to try it without the piano.
@@ -49,6 +66,26 @@ Live check of the whole pipeline (UG → YouTube → LRCLIB → timeline) from t
 - The YouTube Music recording can differ in length from the LRC entry, so a constant offset is
   expected; that is what Sync is for.
 
+## Findings on lyric timing (2026-09-26)
+
+Measured on Fluorescent Adolescent against whisper small on the vocals isolated with Demucs
+(itself within about 0.14 s of the truth), mean error per word:
+
+| Timing | Error |
+|---|---|
+| LRC line start, words spread at 75 ms per character | 0.30 s |
+| The same, spread by syllables instead | 0.33 s |
+| wav2vec2-base forced alignment on the full mix | 0.6 s (music drowns it) |
+| LRC lines + whisper base.en heard words (`LyricTiming`) | 0.18 s |
+
+- Every heard word within a second of its LRC line takes the heard time, less 0.2 s: DTW
+  timestamps mark about where a token ends. The rest are placed by syllables at the singer's
+  pace, measured from the heard words.
+- Prompting whisper with the song's lyrics helps; whisper tiny is too inaccurate.
+- On a Pixel 8: 4 threads (more spill onto the small cores and run 3–4× slower); beam search,
+  since greedy decoding sometimes drops a whole 30 s window of singing. Decoding the AAC
+  recording takes ~18 s of that, mostly Android's per-buffer codec overhead.
+
 ## Layout
 
 - `data/midi`, `domain/model/MidiEvent.kt`, `ConnectionState.kt`, `MidiRepository.kt`: copied
@@ -56,8 +93,10 @@ Live check of the whole pipeline (UG → YouTube → LRCLIB → timeline) from t
 - `data/source`: Ultimate Guitar, LRCLIB and YouTube sources. `data/SongLoader.kt`,
   `data/SongStore.kt`: the load pipeline and the cache: JSON in `filesDir/songs`, the
   downloaded recordings in `filesDir/songs/audio`.
-- `domain/music`: the chord parser, sheet parser, LRC parser, aligner, voicing planner and chord
-  matcher. `domain/practice`: scoring.
+- `data/listen`, `src/main/cpp`: the recording decoded to 16 kHz and transcribed by whisper.cpp
+  v1.9.4 (fetched by CMake at a pinned hash) through JNI; arm64 only.
+- `domain/music`: the chord parser, sheet parser, LRC parser, word timing, aligner, voicing
+  planner and chord matcher. `domain/practice`: scoring.
 - `ui/search`, `ui/player`: the Compose screens. The app is landscape only.
 
 Licensed GPL-3.0, as NewPipeExtractor requires. Personal project; scraping Ultimate Guitar may break

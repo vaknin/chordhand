@@ -58,18 +58,28 @@ data class Timeline(
  * timed neighbours.
  */
 object TimelineAligner {
-    /** Seconds per character when a line's words are spread over its duration. */
-    private const val SEC_PER_CHAR = 0.075
+    private const val SEC_PER_CHAR = LyricTiming.SEC_PER_CHAR
     private const val DEFAULT_CHORD_MS = 2000L
     private const val MIN_CHORD_GAP_MS = 150L
     private val WORD = Regex("""\S+""")
 
-    private data class LrcWord(val norm: String, val ms: Long)
     private data class SheetWord(val lineIndex: Int, val start: Int, val end: Int, val norm: String)
 
-    fun align(sheet: ChordSheet, lrc: List<LrcLine>, durationMs: Long): Timeline {
+    /** [heard] is what speech recognition heard in the recording; it times the words within lines. */
+    fun align(sheet: ChordSheet, lrc: List<LrcLine>, durationMs: Long, heard: List<HeardWord> = emptyList()): Timeline {
+        val lrcWords = LyricTiming.words(lrc, heard, durationMs)
+        val timeline = alignLines(sheet, lrcWords, durationMs)
+        // Text above the first chord that is never sung is a title or a note, not a lyric.
+        val preamble = sheet.lines.indices.takeWhile { li ->
+            val line = sheet.lines[li]
+            line.chords.isEmpty() && timeline.words.none { it.lineIndex == li && it.ms != null }
+        }.size
+        if (preamble == 0 || preamble == sheet.lines.size) return timeline
+        return alignLines(ChordSheet(sheet.lines.drop(preamble)), lrcWords, durationMs)
+    }
+
+    private fun alignLines(sheet: ChordSheet, lrcWords: List<LyricWord>, durationMs: Long): Timeline {
         val sheetWords = sheetWords(sheet)
-        val lrcWords = lrcWords(lrc, durationMs)
         val match = lcs(sheetWords.map { it.norm }, lrcWords.map { it.norm })
 
         val wordMs = arrayOfNulls<Long>(sheetWords.size)
@@ -98,8 +108,7 @@ object TimelineAligner {
         return Timeline(sheet, chords, words, lineStarts(sheet, chords, wordsByLine), durationMs)
     }
 
-    internal fun normalize(word: String): String =
-        word.lowercase().filter { it.isLetterOrDigit() }
+    internal fun normalize(word: String): String = LyricTiming.normalize(word)
 
     private fun sheetWords(sheet: ChordSheet): List<SheetWord> =
         sheet.lines.flatMapIndexed { li, line ->
@@ -107,20 +116,6 @@ object TimelineAligner {
             WORD.findAll(lyric).mapNotNull { m ->
                 val n = normalize(m.value)
                 if (n.isEmpty()) null else SheetWord(li, m.range.first, m.range.last + 1, n)
-            }.toList()
-        }
-
-    private fun lrcWords(lrc: List<LrcLine>, durationMs: Long): List<LrcWord> =
-        lrc.flatMapIndexed { i, line ->
-            if (line.text.isBlank()) return@flatMapIndexed emptyList()
-            val nextMs = lrc.getOrNull(i + 1)?.timeMs ?: durationMs
-            val msPerChar = min(
-                (nextMs - line.timeMs).toDouble() / line.text.length.coerceAtLeast(1),
-                SEC_PER_CHAR * 1000,
-            ).coerceAtLeast(0.0)
-            WORD.findAll(line.text).mapNotNull { m ->
-                val n = normalize(m.value)
-                if (n.isEmpty()) null else LrcWord(n, line.timeMs + (m.range.first * msPerChar).toLong())
             }.toList()
         }
 
@@ -208,9 +203,15 @@ object TimelineAligner {
             val candidates = wordsByLine[li].orEmpty().mapNotNull { it.ms } + chordsByLine[li].orEmpty().map { it.startMs }
             candidates.minOrNull()
         }
-        // Lines with nothing timed start where the previous one did; the result never decreases.
+        // A line with nothing timed (a section name, a chord line with no chords) starts with the
+        // next timed line, so it never takes over from the line still being sung before it.
+        val filled = raw.toMutableList()
+        var next: Long? = null
+        for (li in filled.indices.reversed()) {
+            if (filled[li] == null) filled[li] = next else next = filled[li]
+        }
         var running = 0L
-        return raw.map { t ->
+        return filled.map { t ->
             running = maxOf(running, t ?: running)
             running
         }

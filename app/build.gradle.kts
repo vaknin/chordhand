@@ -10,6 +10,7 @@ android {
     compileSdk = 37
     compileSdkMinor = 2
     buildToolsVersion = "37.0.0"
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "com.kivan.chordhand"
@@ -18,6 +19,18 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+
+        ndk {
+            // Speech recognition runs on the phone's CPU; one ABI keeps the APK and the build small.
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.31.6"
+        }
     }
 
     buildTypes {

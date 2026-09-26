@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kivan.chordhand.data.listen.ListenState
 import com.kivan.chordhand.domain.model.ConnectionState
 import com.kivan.chordhand.domain.music.Chord
 import com.kivan.chordhand.domain.music.MatchResult
@@ -142,9 +143,21 @@ private fun Toolbar(
             Text("${(state.speed * 100).toInt()}%")
             TextButton(onClick = { vm.setSpeed(state.speed + 0.05f) }) { Text("+") }
         }
+        Labeled("Key") {
+            TextButton(onClick = { vm.setKeyShift(state.keyShift - 1) }) { Text("−") }
+            Text(if (state.keyShift == 0) "orig" else "%+d".format(state.keyShift))
+            TextButton(onClick = { vm.setKeyShift(state.keyShift + 1) }) { Text("+") }
+            // Disabled rather than hidden, so the toolbar doesn't shift under the finger.
+            TextButton(onClick = vm::easiestKey, enabled = view.easiestShift != state.keyShift) { Text("Easiest") }
+        }
         Labeled("Wait for me") { Switch(state.waitMode, vm::setWaitMode) }
         Labeled("Easy chords") { Switch(state.easy, vm::setEasy) }
         if (view.lrcCount > 1) TextButton(onClick = vm::nextLyricSync) { Text("Lyrics ${state.lrcIndex + 1}/${view.lrcCount}") }
+        if (view.sheetCount > 1) {
+            TextButton(onClick = vm::nextSheet, enabled = !state.loadingSheet) {
+                Text(if (state.loadingSheet) "Loading sheet…" else "Sheet ${view.sheetIndex + 1}/${view.sheetCount}")
+            }
+        }
         TextButton(onClick = vm::finish) { Text("Finish") }
         ConnectionChip(connection, onScan)
     }
@@ -236,21 +249,36 @@ private fun ChordPanel(
             )
         }
         Spacer(Modifier.weight(1f))
-        SyncControls(state.offsetMs, onNudge = onNudge)
+        state.notice?.let { Text(it, color = Palette.Wrong, style = MaterialTheme.typography.bodySmall) }
+        SyncControls(state, onNudge = onNudge)
     }
 }
 
 /** Lyrics too late? "−" brings them earlier; "+" delays them. Saved per song. */
 @Composable
-private fun SyncControls(offsetMs: Long, onNudge: (Long) -> Unit) {
+private fun SyncControls(state: PlayerUiState, onNudge: (Long) -> Unit) {
     Column {
-        Text("LYRICS SYNC", color = Palette.TextDim, style = MaterialTheme.typography.labelMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("LYRICS SYNC", color = Palette.TextDim, style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.width(10.dp))
+            listenStatus(state)?.let { (text, color) ->
+                Text(text, color = color, style = MaterialTheme.typography.labelMedium)
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { onNudge(-SYNC_STEP_MS) }) { Text("−", fontSize = 20.sp) }
-            Text("%+.1fs".format(offsetMs / 1000.0))
+            Text("%+.1fs".format(state.offsetMs / 1000.0))
             TextButton(onClick = { onNudge(SYNC_STEP_MS) }) { Text("+", fontSize = 20.sp) }
         }
     }
+}
+
+/** How far timing the words to the recording has come, if it has started. */
+private fun listenStatus(state: PlayerUiState): Pair<String, Color>? = when (val l = state.listen) {
+    is ListenState.FetchingModel -> "Getting the listening model ${(l.fraction * 100).toInt()}%" to Palette.TextDim
+    is ListenState.Listening -> "Listening to the words ${(l.fraction * 100).toInt()}%" to Palette.TextDim
+    ListenState.Failed -> "Couldn't listen to the words" to Palette.Wrong
+    ListenState.Done, null -> if (state.wordsHeard) "Words timed by ear" to Palette.Correct else null
 }
 
 @Composable

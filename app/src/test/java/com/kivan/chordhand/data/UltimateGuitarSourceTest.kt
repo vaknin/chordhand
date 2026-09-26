@@ -16,6 +16,9 @@ class UltimateGuitarSourceTest {
         assertThat(first.votes).isEqualTo(2197)
         assertThat(first.url).endsWith("-510133")
         assertThat(results.map { it.artist.lowercase() to it.song.lowercase() }).containsNoDuplicates()
+        assertThat(first.versions.first().url).isEqualTo(first.url)
+        assertThat(first.versions.size).isAtLeast(2)
+        assertThat(first.versions.map { it.votes }).isInOrder(Comparator.reverseOrder<Int>())
     }
 
     @Test fun tabReadsKeyAndCapo() {
