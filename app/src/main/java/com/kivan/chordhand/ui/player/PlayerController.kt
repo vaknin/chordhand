@@ -6,6 +6,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -48,6 +49,8 @@ data class SongView(
     val chordsByLine: Map<Int, List<TimedChord>>,
     val wordsByLine: Map<Int, List<TimedWord>>,
     val lrcCount: Int,
+    /** Song time to jump to from the intro, or null when the song starts right away. */
+    val introSkipMs: Long?,
 )
 
 data class PlayerUiState(
@@ -62,6 +65,8 @@ data class PlayerUiState(
     val easy: Boolean = true,
     val offsetMs: Long = 0,
     val lrcIndex: Int = 0,
+    /** Where the recording is; [songMs] is this shifted by the lyrics sync. */
+    val positionMs: Long = 0,
     /** The chord sounding now, -1 before the first. */
     val chordIndex: Int = -1,
     val held: Set<Int> = emptySet(),
@@ -96,11 +101,12 @@ class PlayerController(app: Application) {
 
     private val player: ExoPlayer = ExoPlayer.Builder(app)
         .setMediaSourceFactory(
-            DefaultMediaSourceFactory(DefaultHttpDataSource.Factory().setUserAgent(Http.DESKTOP_USER_AGENT))
+            // The downloaded file when there is one, the stream otherwise.
+            DefaultMediaSourceFactory(DefaultDataSource.Factory(app, DefaultHttpDataSource.Factory().setUserAgent(Http.DESKTOP_USER_AGENT)))
         )
         .build()
         .apply {
-            setMediaItem(MediaItem.fromUri(loaded.audio.url))
+            setMediaItem(MediaItem.fromUri(loaded.audioUri))
             prepare()
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -144,7 +150,13 @@ class PlayerController(app: Application) {
             chordsByLine = timeline.chords.groupBy { it.lineIndex },
             wordsByLine = timeline.words.groupBy { it.lineIndex },
             lrcCount = cached.lrcCandidates.size,
+            introSkipMs = timeline.firstCueMs?.let { it - INTRO_LEAD_IN_MS }?.takeIf { it > 0 },
         )
+    }
+
+    private fun resetSession() {
+        session = newSession()
+        _state.update { it.copy(hits = emptySet()) }
     }
 
     private fun newSession(): PracticeSession {
@@ -176,6 +188,7 @@ class PlayerController(app: Application) {
         _state.update {
             it.copy(
                 songMs = songMs,
+                positionMs = player.currentPosition,
                 durationMs = if (player.duration > 0) player.duration else it.durationMs,
                 playing = player.isPlaying || player.playWhenReady,
                 buffering = player.playbackState == Player.STATE_BUFFERING,
@@ -201,16 +214,19 @@ class PlayerController(app: Application) {
         }
     }
 
-    fun seekBy(deltaMs: Long) {
-        player.seekTo((player.currentPosition + deltaMs).coerceAtLeast(0))
-        _state.update { it.copy(waitingFor = null) }
-    }
-
     fun restart() {
         player.seekTo(0)
-        session = newSession()
+        resetSession()
         skipWaitFor = null
         _state.update { it.copy(waitingFor = null, summary = null) }
+    }
+
+    /** Jumps to just before the first chord or sung word, keeping play or pause as it was. */
+    fun skipIntro() {
+        val target = _view.value.introSkipMs ?: return
+        if (target <= _state.value.songMs) return
+        player.seekTo((target + _state.value.offsetMs).coerceAtLeast(0))
+        tick()
     }
 
     fun setSpeed(speed: Float) {
@@ -229,20 +245,10 @@ class PlayerController(app: Application) {
     fun setEasy(easy: Boolean) {
         _state.update { it.copy(easy = easy) }
         _view.value = buildView(_view.value.timeline, easy)
-        session = newSession()
+        resetSession()
     }
 
     fun nudgeOffset(deltaMs: Long) = setOffset(_state.value.offsetMs + deltaMs)
-
-    /** "The next line starts now": shifts the lyrics so the line after the current one begins here. */
-    fun syncNextLineNow() {
-        val v = _view.value
-        val songMs = _state.value.songMs
-        val next = v.timeline.sheet.lines.indices.firstOrNull { i ->
-            v.timeline.sheet.lines[i].lyric != null && v.timeline.lineStartMs[i] > songMs
-        } ?: return
-        setOffset(player.currentPosition - v.timeline.lineStartMs[next])
-    }
 
     private fun setOffset(offsetMs: Long) {
         _state.update { it.copy(offsetMs = offsetMs) }
@@ -256,7 +262,7 @@ class PlayerController(app: Application) {
         persist(cached.copy(lrcIndex = index, offsetMs = 0))
         _state.update { it.copy(lrcIndex = index, offsetMs = 0) }
         _view.value = buildView(SongLoader.timelineFor(cached), _state.value.easy)
-        session = newSession()
+        resetSession()
     }
 
     fun touchNote(note: Int, down: Boolean) {
@@ -279,5 +285,10 @@ class PlayerController(app: Application) {
     fun release() {
         scope.cancel()
         player.release()
+    }
+
+    companion object {
+        /** Enough time to find the keys before the first chord after skipping the intro. */
+        const val INTRO_LEAD_IN_MS = 1500L
     }
 }

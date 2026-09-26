@@ -16,7 +16,10 @@ An MVP. The question it answers: is this fun, and does it teach?
   on the next chord's keys shortly before the change, and your keys in green or red.
 - **Wait for me**: the song pauses at each change until you play the chord.
 - **Easy chords**: triads only (Em7 → Em, Dsus4 → D). Speed 50–100 %, pitch kept.
-- **Sync**: ±0.1 s, or "Next line starts now" when the lyrics run early or late. It is saved per song.
+- **Sync**: ±0.2 s when the lyrics run early or late. It is saved per song.
+- **Skip intro**: next to the countdown to the first chord; lands 1.5 s before it.
+- **Offline after the first open**: the chords, lyrics and recording (~3 MB) are saved, so a song
+  opens again with no network. The refresh button on a saved song fetches it all again.
 - A summary at the end: the share of chords played, the timing, and the three chord changes
   missed most.
 - Touch the on-screen keys to try it without the piano.
@@ -51,7 +54,8 @@ Live check of the whole pipeline (UG → YouTube → LRCLIB → timeline) from t
 - `data/midi`, `domain/model/MidiEvent.kt`, `ConnectionState.kt`, `MidiRepository.kt`: copied
   from Oblique, a separate piano app of mine, and repackaged.
 - `data/source`: Ultimate Guitar, LRCLIB and YouTube sources. `data/SongLoader.kt`,
-  `data/SongStore.kt`: the load pipeline and the JSON cache in `filesDir/songs`.
+  `data/SongStore.kt`: the load pipeline and the cache: JSON in `filesDir/songs`, the
+  downloaded recordings in `filesDir/songs/audio`.
 - `domain/music`: the chord parser, sheet parser, LRC parser, aligner, voicing planner and chord
   matcher. `domain/practice`: scoring.
 - `ui/search`, `ui/player`: the Compose screens. The app is landscape only.

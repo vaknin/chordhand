@@ -9,6 +9,7 @@ import com.kivan.chordhand.data.LoadedSong
 import com.kivan.chordhand.data.source.UgSearchResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,9 +24,13 @@ data class SearchUiState(
     val searching: Boolean = false,
     val results: List<UgSearchResult> = emptyList(),
     val recent: List<CachedSong> = emptyList(),
+    /** Ids of the saved songs whose recording is downloaded, so they open with no network. */
+    val offline: Set<String> = emptySet(),
     val loading: LoadingState? = null,
     val error: String? = null,
 )
+
+private const val LOADING_DIALOG_DELAY_MS = 250L
 
 class SearchViewModel : ViewModel() {
     private val loader = AppGraph.songLoader
@@ -39,8 +44,11 @@ class SearchViewModel : ViewModel() {
 
     fun refreshRecent() {
         viewModelScope.launch {
-            val recent = withContext(Dispatchers.IO) { runCatching { loader.recent() }.getOrDefault(emptyList()) }
-            _state.update { it.copy(recent = recent) }
+            val (recent, offline) = withContext(Dispatchers.IO) {
+                val recent = runCatching { loader.recent() }.getOrDefault(emptyList())
+                recent to recent.filter(loader::isDownloaded).mapTo(HashSet()) { it.id }
+            }
+            _state.update { it.copy(recent = recent, offline = offline) }
         }
     }
 
@@ -70,20 +78,29 @@ class SearchViewModel : ViewModel() {
     fun open(song: CachedSong, onReady: () -> Unit) =
         load("${song.song} – ${song.artist}", onReady) { step -> loader.reload(song, step) }
 
+    /** Fetches a saved song again from every service, for when the sheet or recording is wrong. */
+    fun refresh(song: CachedSong, onReady: () -> Unit) =
+        load("${song.song} – ${song.artist}", onReady) { step -> loader.refresh(song, step) }
+
     private fun load(title: String, onReady: () -> Unit, block: ((LoadStep) -> Unit) -> LoadedSong) {
         job?.cancel()
         job = viewModelScope.launch {
-            _state.update { it.copy(loading = LoadingState(title, null, emptySet()), error = null) }
+            _state.update { it.copy(error = null) }
+            // A saved song opens in a blink; only show the steps when there is something to wait for.
+            val dialog = launch {
+                delay(LOADING_DIALOG_DELAY_MS)
+                _state.update { it.copy(loading = it.loading ?: LoadingState(title, null, emptySet())) }
+            }
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     block { step ->
-                        _state.update { s ->
-                            val l = s.loading ?: return@update s
-                            s.copy(loading = l.copy(step = step, done = l.done + listOfNotNull(l.step)))
-                        }
+                        // Steps before this one were done, or came from the cache.
+                        val loading = LoadingState(title, step, LoadStep.entries.filter { it < step }.toSet())
+                        _state.update { it.copy(loading = loading) }
                     }
                 }
             }
+            dialog.cancel()
             result.onSuccess { song ->
                 AppGraph.currentSong = song
                 _state.update { it.copy(loading = null) }

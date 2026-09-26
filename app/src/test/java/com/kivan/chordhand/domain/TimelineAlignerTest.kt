@@ -66,4 +66,16 @@ class TimelineAlignerTest {
         assertThat(t.chordAt(0)).isEqualTo(-1)
         assertThat(t.chordAt(t.chords[5].startMs)).isEqualTo(5)
     }
+
+    @Test fun firstCueIsTheEarlierOfFirstChordAndFirstSungWord() {
+        // "Hello my" is sung before the first chord, which sits over "dear".
+        val sheet = ChordSheetParser.parse("         [ch]C[/ch]\nHello my dear friend")
+        val t = TimelineAligner.align(sheet, listOf(LrcLine(10_000, "Hello my dear friend"), LrcLine(14_000, "")), 30_000)
+        assertThat(t.chords.single().startMs).isGreaterThan(10_000)
+        assertThat(t.firstCueMs).isEqualTo(10_000)
+    }
+
+    @Test fun noFirstCueWithoutChordsOrWords() {
+        assertThat(TimelineAligner.align(ChordSheetParser.parse(""), emptyList(), 30_000).firstCueMs).isNull()
+    }
 }

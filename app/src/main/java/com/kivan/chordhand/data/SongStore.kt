@@ -35,12 +35,17 @@ data class CachedSong(
     }
 }
 
-/** One JSON file per song under the app's files directory. */
+/**
+ * One JSON file per song under the app's files directory, and next to it in `audio/` the
+ * recording itself once it has been downloaded.
+ */
 class SongStore(private val dir: File) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val audioDir = File(dir, "audio")
 
     init {
         dir.mkdirs()
+        audioDir.mkdirs()
     }
 
     fun save(song: CachedSong) {
@@ -51,6 +56,16 @@ class SongStore(private val dir: File) {
 
     fun load(id: String): CachedSong? =
         File(dir, "$id.json").takeIf { it.exists() }?.let { runCatching { json.decodeFromString(CachedSong.serializer(), it.readText()) }.getOrNull() }
+
+    /** The song saved from this Ultimate Guitar tab, if any. */
+    fun findByUgUrl(ugUrl: String): CachedSong? = recent().firstOrNull { it.ugUrl == ugUrl }
+
+    /** Where the recording of [song] lives once downloaded; check [File.exists]. */
+    fun audioFile(song: CachedSong): File = File(audioDir, "${song.id}.m4a")
+
+    fun deleteAudio(song: CachedSong) {
+        audioFile(song).delete()
+    }
 
     fun recent(): List<CachedSong> =
         dir.listFiles { f -> f.name.endsWith(".json") }.orEmpty()

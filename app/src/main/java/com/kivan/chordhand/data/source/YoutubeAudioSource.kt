@@ -14,6 +14,7 @@ import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeSearchQu
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
+import java.io.File
 
 data class YoutubeTrack(val videoUrl: String, val title: String, val uploader: String, val durationSec: Long)
 
@@ -23,7 +24,7 @@ data class AudioStreamUrl(val url: String, val mimeType: String?, val bitrate: I
  * Finds the song on YouTube and resolves a playable audio-only stream, the way NewPipe does.
  * Stream URLs expire after a few hours, so only [YoutubeTrack.videoUrl] is worth caching.
  */
-class YoutubeAudioSource(http: OkHttpClient = Http.client) {
+class YoutubeAudioSource(private val http: OkHttpClient = Http.client) {
     init {
         synchronized(YoutubeAudioSource::class) {
             if (NewPipe.getDownloader() == null) NewPipe.init(OkHttpDownloader(http))
@@ -46,6 +47,44 @@ class YoutubeAudioSource(http: OkHttpClient = Http.client) {
         return AudioStreamUrl(best.content, best.format?.mimeType, best.averageBitrate)
     }
 
+    /**
+     * Saves the stream at [url] to [target], atomically: the file appears only once complete.
+     * Fetched in ranges, as NewPipe does, because YouTube throttles one long request.
+     */
+    fun download(url: String, target: File) {
+        val part = File(target.path + ".part")
+        try {
+            part.outputStream().use { out ->
+                var from = 0L
+                var total = Long.MAX_VALUE
+                while (from < total) {
+                    val request = okhttp3.Request.Builder()
+                        .url(url)
+                        .header("User-Agent", Http.DESKTOP_USER_AGENT)
+                        .header("Range", "bytes=$from-${from + DOWNLOAD_CHUNK - 1}")
+                        .build()
+                    http.newCall(request).execute().use { response ->
+                        when (response.code) {
+                            // The server ignored the range: the body is the whole file.
+                            200 -> { response.body.byteStream().copyTo(out); total = 0 }
+                            206 -> {
+                                total = response.header("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+                                    ?: throw SourceException("Download of $url gave no length")
+                                val read = response.body.byteStream().copyTo(out)
+                                if (read == 0L) throw SourceException("Download of $url stopped at $from of $total bytes")
+                                from += read
+                            }
+                            else -> throw SourceException("Download of $url failed: HTTP ${response.code}")
+                        }
+                    }
+                }
+            }
+            if (!part.renameTo(target)) throw SourceException("Couldn't save ${target.name}")
+        } finally {
+            part.delete()
+        }
+    }
+
     private fun searchWith(query: String, filter: String): List<YoutubeTrack> {
         val handler = ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf(filter), "")
         return SearchInfo.getInfo(ServiceList.YouTube, handler).relatedItems
@@ -53,6 +92,8 @@ class YoutubeAudioSource(http: OkHttpClient = Http.client) {
             .map { YoutubeTrack(it.url, it.name, it.uploaderName.orEmpty(), it.duration) }
     }
 }
+
+private const val DOWNLOAD_CHUNK = 1L shl 20
 
 private class OkHttpDownloader(private val client: OkHttpClient) : Downloader() {
     override fun execute(request: Request): Response {

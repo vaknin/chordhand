@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,6 +20,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -35,6 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kivan.chordhand.data.LoadStep
 import com.kivan.chordhand.domain.model.ConnectionState
 import com.kivan.chordhand.ui.common.ConnectionChip
+import com.kivan.chordhand.ui.common.TransportIcons
 import com.kivan.chordhand.ui.theme.Palette
 
 @Composable
@@ -76,10 +80,14 @@ fun SearchScreen(
             when {
                 state.searching -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 state.results.isNotEmpty() -> LazyColumn {
+                    val saved = state.recent.associateBy { it.ugUrl }
                     items(state.results) { r ->
-                        SongRow(r.song, r.artist, "${r.votes} votes · ★ %.1f".format(r.rating)) {
-                            vm.open(r, onOpenPlayer)
-                        }
+                        val song = saved[r.url]
+                        SongRow(
+                            r.song, r.artist, "${r.votes} votes · ★ %.1f".format(r.rating),
+                            saved = song?.let { it.id in state.offline },
+                            onRefresh = song?.let { { vm.refresh(it, onOpenPlayer) } },
+                        ) { vm.open(r, onOpenPlayer) }
                     }
                 }
                 state.recent.isNotEmpty() -> LazyColumn {
@@ -88,7 +96,11 @@ fun SearchScreen(
                             modifier = Modifier.padding(vertical = 8.dp))
                     }
                     items(state.recent) { s ->
-                        SongRow(s.song, s.artist, s.tonality?.let { "Key $it" } ?: "") { vm.open(s, onOpenPlayer) }
+                        SongRow(
+                            s.song, s.artist, s.tonality?.let { "Key $it" } ?: "",
+                            saved = s.id in state.offline,
+                            onRefresh = { vm.refresh(s, onOpenPlayer) },
+                        ) { vm.open(s, onOpenPlayer) }
                     }
                 }
                 else -> Text(
@@ -104,15 +116,36 @@ fun SearchScreen(
     state.loading?.let { LoadingDialog(it, vm::cancelLoading) }
 }
 
+/**
+ * One song. [saved] is null for a song never opened, false when it is saved but the recording
+ * still streams, true when it opens with no network. [onRefresh] fetches a saved song anew.
+ */
 @Composable
-private fun SongRow(title: String, artist: String, detail: String, onClick: () -> Unit) {
-    Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp)) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.width(8.dp))
-            Text(artist, color = Palette.TextDim)
-            Spacer(Modifier.weight(1f))
-            Text(detail, color = Palette.TextFaint, style = MaterialTheme.typography.bodySmall)
+private fun SongRow(
+    title: String,
+    artist: String,
+    detail: String,
+    saved: Boolean? = null,
+    onRefresh: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.width(8.dp))
+        Text(artist, color = Palette.TextDim)
+        Spacer(Modifier.weight(1f))
+        Text(detail, color = Palette.TextFaint, style = MaterialTheme.typography.bodySmall)
+        saved?.let {
+            Spacer(Modifier.width(12.dp))
+            Text(if (it) "Offline" else "Saved", color = Palette.Correct.copy(alpha = 0.8f), style = MaterialTheme.typography.labelMedium)
+        }
+        if (onRefresh != null) {
+            IconButton(onClick = onRefresh) {
+                Icon(TransportIcons.Refresh, contentDescription = "Fetch again", tint = Palette.TextDim, modifier = Modifier.size(20.dp))
+            }
         }
     }
     HorizontalDivider(color = Palette.SurfaceHigh)

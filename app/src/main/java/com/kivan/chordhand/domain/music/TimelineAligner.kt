@@ -27,6 +27,10 @@ data class Timeline(
     val anchoredShare: Double
         get() = if (chords.isEmpty()) 0.0 else chords.count { it.anchored }.toDouble() / chords.size
 
+    /** When the song starts for the player: the first chord or sung word, whichever is earlier. */
+    val firstCueMs: Long?
+        get() = listOfNotNull(chords.firstOrNull()?.startMs, words.mapNotNull { it.ms }.minOrNull()).minOrNull()
+
     fun chordEndMs(i: Int): Long = chords.getOrNull(i + 1)?.startMs ?: durationMs
 
     /** Index of the chord sounding at [ms], or -1 before the first one. */

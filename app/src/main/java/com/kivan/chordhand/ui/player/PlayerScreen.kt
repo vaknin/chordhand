@@ -1,21 +1,30 @@
 package com.kivan.chordhand.ui.player
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -36,12 +45,16 @@ import com.kivan.chordhand.domain.music.Chord
 import com.kivan.chordhand.domain.music.MatchResult
 import com.kivan.chordhand.domain.practice.PracticeSummary
 import com.kivan.chordhand.ui.common.ConnectionChip
+import com.kivan.chordhand.ui.common.TransportIcons
 import com.kivan.chordhand.ui.theme.Palette
 
 /** How long before a change the next chord's keys get their dots. */
 private const val NEXT_HINT_MS = 1500L
 
 private const val SYNC_STEP_MS = 200L
+
+/** "Skip intro" shows only while it saves at least this much waiting. */
+private const val MIN_SKIP_MS = 2000L
 
 @Composable
 fun PlayerScreen(vm: PlayerController, connection: ConnectionState, onScan: () -> Unit, onBack: () -> Unit) {
@@ -54,7 +67,7 @@ fun PlayerScreen(vm: PlayerController, connection: ConnectionState, onScan: () -
             ChordPanel(
                 view, state,
                 onNudge = vm::nudgeOffset,
-                onNextLineNow = vm::syncNextLineNow,
+                onSkipIntro = vm::skipIntro,
                 modifier = Modifier.width(290.dp).fillMaxHeight(),
             )
             Spacer(Modifier.width(16.dp))
@@ -105,13 +118,16 @@ private fun Toolbar(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         TextButton(onClick = onBack) { Text("←", fontSize = 20.sp) }
-        FilledTonalButton(onClick = vm::togglePlay) {
-            Text(if (state.playing) "Pause" else if (state.waitingFor != null) "Skip" else "Play", fontSize = 16.sp)
+        IconButton(onClick = vm::restart) { Icon(TransportIcons.Restart, "Restart") }
+        FilledTonalIconButton(onClick = vm::togglePlay, modifier = Modifier.size(52.dp)) {
+            Icon(
+                if (state.playing) TransportIcons.Pause else TransportIcons.Play,
+                contentDescription = if (state.playing) "Pause" else "Play",
+                modifier = Modifier.size(30.dp),
+            )
         }
-        TextButton(onClick = { vm.seekBy(-5000) }) { Text("−5s") }
-        TextButton(onClick = vm::restart) { Text("⏮", fontSize = 18.sp) }
         Text(
-            "%d:%02d".format(state.songMs.coerceAtLeast(0) / 60_000, state.songMs.coerceAtLeast(0) / 1000 % 60),
+            "%d:%02d".format(state.positionMs / 60_000, state.positionMs / 1000 % 60),
             color = if (state.buffering) Palette.LeftHand else Palette.TextDim,
         )
         Spacer(Modifier.width(8.dp))
@@ -151,7 +167,7 @@ private fun ChordPanel(
     view: SongView,
     state: PlayerUiState,
     onNudge: (Long) -> Unit,
-    onNextLineNow: () -> Unit,
+    onSkipIntro: () -> Unit,
     modifier: Modifier,
 ) {
     val chords = view.timeline.chords
@@ -185,13 +201,29 @@ private fun ChordPanel(
         }
         if (nextIndex in chords.indices) {
             val startsIn = (chords[nextIndex].startMs - state.songMs).coerceAtLeast(0)
-            Row(verticalAlignment = Alignment.Bottom) {
-                if (index >= 0) {
+            if (index >= 0) {
+                Row(verticalAlignment = Alignment.Bottom) {
                     Text("NEXT ", color = Palette.TextDim, style = MaterialTheme.typography.labelMedium)
                     Text(view.chords[nextIndex].symbol, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Palette.Chord.copy(alpha = 0.7f))
                     Text("  in %.1fs".format(startsIn / 1000.0), color = Palette.TextDim)
-                } else {
+                }
+            } else {
+                // The skip sits on the countdown it shortens; the row keeps its height when it goes.
+                Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("Starts in %.1fs".format(startsIn / 1000.0), color = Palette.TextDim)
+                    Spacer(Modifier.weight(1f))
+                    val skipTo = view.introSkipMs
+                    AnimatedVisibility(skipTo != null && skipTo - state.songMs >= MIN_SKIP_MS, enter = fadeIn(), exit = fadeOut()) {
+                        FilledTonalButton(
+                            onClick = onSkipIntro,
+                            contentPadding = PaddingValues(start = 12.dp, end = 14.dp),
+                            modifier = Modifier.height(36.dp),
+                        ) {
+                            Icon(TransportIcons.Forward, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Skip intro")
+                        }
+                    }
                 }
             }
             val from = if (index >= 0) chords[index].startMs else 0L
@@ -204,23 +236,19 @@ private fun ChordPanel(
             )
         }
         Spacer(Modifier.weight(1f))
-        SyncControls(state.offsetMs, onNudge = onNudge, onNextLineNow = onNextLineNow)
+        SyncControls(state.offsetMs, onNudge = onNudge)
     }
 }
 
-/**
- * Lyrics too late? "−" moves them earlier. Or tap "Next line now" the moment the singer starts
- * the line below the current one.
- */
+/** Lyrics too late? "−" brings them earlier; "+" delays them. Saved per song. */
 @Composable
-private fun SyncControls(offsetMs: Long, onNudge: (Long) -> Unit, onNextLineNow: () -> Unit) {
+private fun SyncControls(offsetMs: Long, onNudge: (Long) -> Unit) {
     Column {
         Text("LYRICS SYNC", color = Palette.TextDim, style = MaterialTheme.typography.labelMedium)
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { onNudge(-SYNC_STEP_MS) }) { Text("−", fontSize = 20.sp) }
             Text("%+.1fs".format(offsetMs / 1000.0))
             TextButton(onClick = { onNudge(SYNC_STEP_MS) }) { Text("+", fontSize = 20.sp) }
-            FilledTonalButton(onClick = onNextLineNow) { Text("Next line now") }
         }
     }
 }

@@ -12,6 +12,7 @@ import com.kivan.chordhand.domain.music.Chord
 import okhttp3.Request
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * Feasibility spike against the live services. Offline runs skip it; run with
@@ -38,6 +39,11 @@ class PipelineSpikeTest {
         val probe = Request.Builder().url(audio.url).header("Range", "bytes=0-1023")
             .header("User-Agent", Http.DESKTOP_USER_AGENT).build()
         Http.client.newCall(probe).execute().use { println("YT: stream probe HTTP ${it.code}, ${it.body.bytes().size} bytes") }
+        val file = File.createTempFile("spike", ".m4a").apply { delete() }
+        val started = System.nanoTime()
+        yt.download(audio.url, file)
+        println("YT: downloaded ${file.length()} bytes in ${(System.nanoTime() - started) / 1_000_000} ms")
+        file.delete()
 
         val candidates = LrclibSource.rank(LrclibSource().search(tab.artist, tab.song), track.durationSec.toDouble())
         candidates.forEach {
